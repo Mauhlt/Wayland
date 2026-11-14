@@ -80,7 +80,7 @@ pub const MOD_NAME_NUM = "Mod2";
 pub const MOD_NAME_LOGO = "Mod4";
 
 /// enum xkb_state_component.
-pub const StateComponent = packed struct(u32) {
+pub const StateComponent = bitpack struct(u32) {
     mods_depressed: bool = false,
     mods_latched: bool = false,
     mods_locked: bool = false,

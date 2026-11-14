@@ -319,7 +319,7 @@ pub const Region = opaque {
 pub const Seat = opaque {
     pub const interface = wl_seat_interface;
 
-    pub const Capabilities = packed struct(u32) {
+    pub const Capabilities = bitpack struct(u32) {
         pointer: bool = false,
         keyboard: bool = false,
         touch: bool = false,
@@ -488,7 +488,7 @@ pub const Touch = opaque {
 pub const Output = opaque {
     pub const interface = wl_output_interface;
 
-    pub const Mode = packed struct(u32) {
+    pub const Mode = bitpack struct(u32) {
         current: bool = false,
         preferred: bool = false,
         _r2: u30 = 0,
