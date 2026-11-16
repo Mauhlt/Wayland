@@ -125,6 +125,33 @@ pub const wl_touch_interface: Interface = .init("wl_touch", 9, &.{
     msg("orientation", "6if", &.{ null, null }),
 });
 
+pub const wl_shm_interface: Interface = .init("wl_shm", 2, &.{
+    msg("create_pool", "nhi", &.{ &wl_shm_pool_interface, null, null }),
+    msg("release", "2", &.{}),
+}, &.{
+    msg("format", "u", &.{null}),
+});
+
+pub const wl_shm_pool_interface: Interface = .init("wl_shm_pool", 2, &.{
+    msg("create_buffer", "niiiiu", &.{ &wl_buffer_interface, null, null, null, null, null }),
+    msg("destroy", "", &.{}),
+    msg("resize", "i", &.{null}),
+}, &.{});
+
+pub const wl_subcompositor_interface: Interface = .init("wl_subcompositor", 1, &.{
+    msg("destroy", "", &.{}),
+    msg("get_subsurface", "noo", &.{ &wl_subsurface_interface, &wl_surface_interface, &wl_surface_interface }),
+}, &.{});
+
+pub const wl_subsurface_interface: Interface = .init("wl_subsurface", 1, &.{
+    msg("destroy", "", &.{}),
+    msg("set_position", "ii", &.{ null, null }),
+    msg("place_above", "o", &.{&wl_surface_interface}),
+    msg("place_below", "o", &.{&wl_surface_interface}),
+    msg("set_sync", "", &.{}),
+    msg("set_desync", "", &.{}),
+}, &.{});
+
 pub const wl_output_interface: Interface = .init("wl_output", 4, &.{
     msg("release", "3", &.{}),
 }, &.{
@@ -205,7 +232,8 @@ pub const Compositor = opaque {
     }
 };
 
-/// Opaque here: Vulkan presents through the surface, not wl_buffer.
+/// A buffer: Vulkan's WSI makes its own; a client makes one from a
+/// `ShmPool` (e.g. client-side decorations, cursors).
 pub const Buffer = opaque {
     pub const interface = wl_buffer_interface;
 
@@ -481,6 +509,100 @@ pub const Touch = opaque {
     }
     pub fn release(self: *Touch) void {
         if (c.version(self) >= 3) c.requestDestroy(self, 0, &.{}) else c.destroyProxy(self);
+    }
+};
+
+/// wl_shm: shared-memory buffers (a memfd the compositor maps too).
+pub const Shm = opaque {
+    pub const interface = wl_shm_interface;
+
+    /// wl_shm.format. Only these two are always supported; the others are
+    /// DRM fourcc codes, announced by `format` events.
+    pub const Format = enum(u32) {
+        /// 32-bit, little-endian 0xAARRGGBB (premultiplied alpha).
+        argb8888 = 0,
+        /// 32-bit, little-endian 0xXXRRGGBB.
+        xrgb8888 = 1,
+        _,
+    };
+    pub const Event = union(enum) {
+        format: Format,
+    };
+    pub fn decodeEvent(opcode: u32, a: [*]Argument) ?Event {
+        return if (opcode == 0) .{ .format = @enumFromInt(a[0].u) } else null;
+    }
+    pub fn setListener(self: *Shm, comptime Data: type, comptime cb: fn (*Shm, Event, Data) void, data: Data) void {
+        c.setListener(Shm, self, Data, cb, data);
+    }
+
+    /// A pool over `fd` (`size` bytes, mapped by the compositor). The fd
+    /// can be closed once the request is flushed.
+    pub fn createPool(self: *Shm, fd: i32, size: i32) error{OutOfMemory}!*ShmPool {
+        return c.requestNew(ShmPool, self, 0, &.{ Argument.new_id, .fd(fd), .int(size) });
+    }
+    /// Uses the v2 release request when available.
+    pub fn release(self: *Shm) void {
+        if (c.version(self) >= 2) c.requestDestroy(self, 1, &.{}) else c.destroyProxy(self);
+    }
+};
+
+pub const ShmPool = opaque {
+    pub const interface = wl_shm_pool_interface;
+    pub const Event = noreturn;
+
+    /// A buffer at byte `offset` of the pool. It stays valid after the pool
+    /// is destroyed.
+    pub fn createBuffer(self: *ShmPool, offset: i32, width: i32, height: i32, stride: i32, format: Shm.Format) error{OutOfMemory}!*Buffer {
+        return c.requestNew(Buffer, self, 0, &.{ Argument.new_id, .int(offset), .int(width), .int(height), .int(stride), .uint(@backingInt(format)) });
+    }
+    pub fn destroy(self: *ShmPool) void {
+        c.requestDestroy(self, 1, &.{});
+    }
+    /// Grows the pool (never shrinks).
+    pub fn resize(self: *ShmPool, size: i32) void {
+        c.request(self, 2, &.{.int(size)});
+    }
+};
+
+/// wl_subcompositor: surfaces placed relative to a parent surface.
+pub const Subcompositor = opaque {
+    pub const interface = wl_subcompositor_interface;
+    pub const Event = noreturn;
+
+    pub fn destroy(self: *Subcompositor) void {
+        c.requestDestroy(self, 0, &.{});
+    }
+    /// Makes `surface` a sub-surface of `parent`.
+    pub fn getSubsurface(self: *Subcompositor, surface: *Surface, parent: *Surface) error{OutOfMemory}!*Subsurface {
+        return c.requestNew(Subsurface, self, 1, &.{ Argument.new_id, .object(surface), .object(parent) });
+    }
+};
+
+/// wl_subsurface. Position and stacking apply on the parent's next commit;
+/// in sync mode (the default) so does the surface's own content, in desync
+/// mode its own commits apply at once.
+pub const Subsurface = opaque {
+    pub const interface = wl_subsurface_interface;
+    pub const Event = noreturn;
+
+    pub fn destroy(self: *Subsurface) void {
+        c.requestDestroy(self, 0, &.{});
+    }
+    /// Parent-surface coordinates of the top-left corner (may be negative).
+    pub fn setPosition(self: *Subsurface, x: i32, y: i32) void {
+        c.request(self, 1, &.{ .int(x), .int(y) });
+    }
+    pub fn placeAbove(self: *Subsurface, sibling: *Surface) void {
+        c.request(self, 2, &.{.object(sibling)});
+    }
+    pub fn placeBelow(self: *Subsurface, sibling: *Surface) void {
+        c.request(self, 3, &.{.object(sibling)});
+    }
+    pub fn setSync(self: *Subsurface) void {
+        c.request(self, 4, &.{});
+    }
+    pub fn setDesync(self: *Subsurface) void {
+        c.request(self, 5, &.{});
     }
 };
 

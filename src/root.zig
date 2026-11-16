@@ -13,6 +13,9 @@ pub const CLIENT = @import("wayland_client.zig");
 pub const WL = @import("wayland_protocol.zig");
 pub const XDG = @import("xdg_shell.zig");
 pub const DECOR = @import("xdg_decoration.zig");
+pub const CURSOR_SHAPE = @import("cursor_shape.zig");
+/// libwayland-cursor (dlopen): cursor theme images.
+pub const CURSOR = @import("wayland_cursor.zig");
 pub const XKB = @import("xkbcommon.zig");
 pub const DL = @import("dl.zig");
 
@@ -53,6 +56,9 @@ const all_interfaces = [_]*const CLIENT.Interface{
     &XDG.xdg_wm_base_interface, &XDG.xdg_positioner_interface, &XDG.xdg_surface_interface,
     &XDG.xdg_toplevel_interface, &XDG.xdg_popup_interface,
     &DECOR.zxdg_decoration_manager_v1_interface, &DECOR.zxdg_toplevel_decoration_v1_interface,
+    &WL.wl_shm_interface,      &WL.wl_shm_pool_interface, &WL.wl_subcompositor_interface,
+    &WL.wl_subsurface_interface,
+    &CURSOR_SHAPE.wp_cursor_shape_manager_v1_interface, &CURSOR_SHAPE.wp_cursor_shape_device_v1_interface,
 };
 
 test "protocol tables: names, versions and message counts" {
@@ -80,6 +86,21 @@ test "protocol tables: names, versions and message counts" {
     try expect(&XDG.xdg_popup_interface, "xdg_popup", 6, 3, 3);
     try expect(&DECOR.zxdg_decoration_manager_v1_interface, "zxdg_decoration_manager_v1", 1, 2, 0);
     try expect(&DECOR.zxdg_toplevel_decoration_v1_interface, "zxdg_toplevel_decoration_v1", 1, 3, 1);
+    try expect(&WL.wl_shm_interface, "wl_shm", 2, 2, 1);
+    try expect(&WL.wl_shm_pool_interface, "wl_shm_pool", 2, 3, 0);
+    try expect(&WL.wl_subcompositor_interface, "wl_subcompositor", 1, 2, 0);
+    try expect(&WL.wl_subsurface_interface, "wl_subsurface", 1, 6, 0);
+    try expect(&CURSOR_SHAPE.wp_cursor_shape_manager_v1_interface, "wp_cursor_shape_manager_v1", 1, 3, 0);
+    try expect(&CURSOR_SHAPE.wp_cursor_shape_device_v1_interface, "wp_cursor_shape_device_v1", 1, 2, 0);
+}
+
+test "libwayland-cursor ABI structs" {
+    try testing.expectEqual(20, @sizeOf(CURSOR.Image));
+    try testing.expectEqual(@offsetOf(CURSOR.Cursor, "images"), @sizeOf(usize));
+    try testing.expectEqual(3 * @sizeOf(usize), @sizeOf(CURSOR.Cursor));
+    try testing.expectEqual(1, @backingInt(WL.Shm.Format.xrgb8888));
+    try testing.expectEqual(18, @backingInt(CURSOR_SHAPE.Device.Shape.e_resize));
+    try testing.expectEqual(29, @backingInt(CURSOR_SHAPE.Device.Shape.nwse_resize));
 }
 
 test "protocol tables: every message is well formed" {
