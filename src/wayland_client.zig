@@ -306,10 +306,20 @@ fn asProxy(obj: anytype) *Proxy {
     return @ptrCast(obj);
 }
 
+/// libwayland's WL_CLOSURE_MAX_ARGS: no message has more arguments.
+pub const max_args = 20;
+
 fn marshal(proxy: *Proxy, opcode: u32, iface: ?*const Interface, ver: u32, flags: u32, args: []const Argument) ?*Proxy {
     const a = api();
-    // libwayland never writes through `args`; the C API just isn't const.
-    const argv: [*]Argument = @constCast(if (args.len == 0) &[_]Argument{.new_id} else args.ptr);
+    // libwayland writes through `args`: a request that creates an object
+    // gets the new proxy stored into its new_id argument
+    // (create_outgoing_proxy sets args[i].o). Callers pass constant
+    // argument lists (often in read-only memory), so marshal from a
+    // writable copy.
+    std.debug.assert(args.len <= max_args);
+    var buf: [max_args]Argument = undefined;
+    if (args.len == 0) buf[0] = .new_id else @memcpy(buf[0..args.len], args);
+    const argv: [*]Argument = &buf;
     if (!force_legacy_marshal) if (a.wl_proxy_marshal_array_flags) |f| return f(proxy, opcode, iface, ver, flags, argv);
     const result = if (iface) |i|
         a.wl_proxy_marshal_array_constructor_versioned.?(proxy, opcode, argv, i, ver)
